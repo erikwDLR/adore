@@ -12,13 +12,13 @@
 	url = git@github.com:eclipse-adore/adore_visualizer.git
 [submodule "nodes/adore_decision_maker"]
 	path = ros2_workspace/src/adore_ros2_nodes/decision_maker
-	url = git@github.com:eclipse-adore/adore_decision_maker.git
+	url = git@github.com:erikwDLR/adore_decision_maker.git
 [submodule "nodes/adore_trajectory_tracker"]
 	path = ros2_workspace/src/adore_ros2_nodes/trajectory_tracker
 	url = git@github.com:eclipse-adore/adore_trajectory_tracker.git
 [submodule "adore_scenarios/adore_simulation_scenarios"]
 	path = adore_scenarios/simulation_scenarios
-	url = git@github.com:eclipse-adore/adore_simulation_scenarios.git
+	url = git@github.com:erikwDLR/adore_simulation_scenarios.git
 [submodule "interfaces/sumo_bridge"]
 	path = ros2_workspace/src/adore_interfaces/sumo_bridge
 	url = git@github.com:eclipse-adore/sumo_if_ros.git
@@ -33,7 +33,7 @@
 	url = git@github.com:DLR-TS/ros2_observer.git
 [submodule "libraries/adore_planning"]
 	path = ros2_workspace/src/adore_libraries/adore_planning
-	url = git@github.com:eclipse-adore/adore_planning.git
+	url = git@github.com:erikwDLR/adore_planning.git
 [submodule "libraries/adore_controllers"]
 	path = ros2_workspace/src/adore_libraries/adore_controllers
 	url = git@github.com:eclipse-adore/adore_controllers.git
@@ -45,7 +45,7 @@
 	url = git@github.com:eclipse-adore/adore_math.git
 [submodule "libraries/adore_dynamics"]
 	path = ros2_workspace/src/adore_libraries/adore_dynamics
-	url = git@github.com:eclipse-adore/adore_dynamics.git
+	url = git@github.com:erikwDLR/adore_dynamics.git
 [submodule "conversions/adore_dynamics_conversions"]
 	path = ros2_workspace/src/adore_ros2_conversions/adore_dynamics_conversions
 	url = git@github.com:eclipse-adore/adore_dynamics_conversions.git
