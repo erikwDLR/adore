@@ -5,47 +5,12 @@
     let _codeEditor = null;
     let _usingTextarea = false;
     let _currentStatus = 'idle';
-    let _isEditingLoop = false;
+    let _pendingLoopUpdate = false;
     let _loopDebounce = null;
 
-    const DEFAULT_LAUNCH = `from launch import LaunchDescription
-import os, sys
-base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if base_dir not in sys.path:
-    sys.path.insert(0, base_dir)
-from scenario_helpers.simulated_vehicle import create_simulated_vehicle_nodes, Position
-from scenario_helpers.visualizer import create_visualization_nodes
+    const PERSIST_KEYS = ['loopMode', 'loopDelay', 'loopRuntime', 'modelCheckEnabled', 'modelCheckConfig'];
 
-start_position = Position(lat_long=(52.314562, 10.560474), psi=0.0)
-goal_position  = Position(lat_long=(52.313533, 10.560554))
-
-def generate_launch_description():
-    launch_file_dir  = os.path.dirname(os.path.realpath(__file__))
-    map_image_folder = os.path.abspath(os.path.join(launch_file_dir, "../assets/maps/"))
-    map_folder       = os.path.abspath(os.path.join(launch_file_dir, "../assets/tracks/"))
-    vehicle_param    = os.path.abspath(os.path.join(launch_file_dir, "../assets/vehicle_params/"))
-    map_file         = map_folder + "/de_bs_borders_wfs.r2sr"
-    vehicle_model_file = vehicle_param + "/NGC.json"
-
-    return LaunchDescription([
-        *create_visualization_nodes(
-            whitelist=["ego_vehicle"],
-            asset_folder=map_image_folder,
-            use_center_ego=True
-        ),
-        *create_simulated_vehicle_nodes(
-            namespace="ego_vehicle",
-            start_position=start_position,
-            goal_position=goal_position,
-            map_file=map_file,
-            model_file=vehicle_model_file,
-            controllable=True,
-            optinlc_route_following=True,
-            v2x_id=0, vehicle_id=0,
-            controller=1, debug=False, composable=False
-        )
-    ])
-`;
+    const TEMPLATE_PLACEHOLDER = '# Loading template.launch.py...';
 
     function editorValue() {
         if (_usingTextarea) return document.getElementById('scenarioTextarea').value;
@@ -69,7 +34,7 @@ def generate_launch_description():
                 indentWithTabs: false,
                 lineWrapping: true,
                 tabSize: 4,
-                value: DEFAULT_LAUNCH
+                value: TEMPLATE_PLACEHOLDER
             });
             setTimeout(() => _codeEditor && _codeEditor.refresh(), 150);
         } catch (e) {
@@ -77,10 +42,56 @@ def generate_launch_description():
             document.querySelector('.code-editor-container').style.display = 'none';
             const ta = document.getElementById('scenarioTextarea');
             ta.style.display = 'block';
-            ta.value = DEFAULT_LAUNCH;
+            ta.value = TEMPLATE_PLACEHOLDER;
             _usingTextarea = true;
         }
     }
+
+    async function loadTemplate() {
+        try {
+            const r = await fetch('/api/scenario/template');
+            const d = await r.json();
+            if (d.success) {
+                if (editorValue().trim() === TEMPLATE_PLACEHOLDER.trim() || editorValue().trim() === '') {
+                    setEditorValue(d.content);
+                }
+            } else {
+                console.warn('template.launch.py not available:', d.message);
+                if (editorValue().trim() === TEMPLATE_PLACEHOLDER.trim()) {
+                    setEditorValue('# template.launch.py not found in scenarios directory.\n# Create one or select a scenario from the list above.\n');
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to load template:', e);
+        }
+    }
+
+    // ── localStorage persistence ──────────────────────────────────────────────
+
+    function saveLoopPrefs() {
+        PERSIST_KEYS.forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            localStorage.setItem('scenario_' + id,
+                el.type === 'checkbox' ? el.checked : el.value);
+        });
+    }
+
+    function restoreLoopPrefs() {
+        PERSIST_KEYS.forEach(id => {
+            const stored = localStorage.getItem('scenario_' + id);
+            if (stored === null) return;
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (el.type === 'checkbox') {
+                el.checked = stored === 'true';
+            } else {
+                el.value = stored;
+            }
+        });
+    }
+
+    // ── Scenarios ─────────────────────────────────────────────────────────────
 
     async function loadScenarios() {
         try {
@@ -182,7 +193,8 @@ def generate_launch_description():
     }
 
     async function toggleLoopMode() {
-        if (_isEditingLoop) return;
+        _pendingLoopUpdate = false;
+        saveLoopPrefs();
         await fetch('/api/scenario/loop', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -196,6 +208,14 @@ def generate_launch_description():
         });
     }
 
+    function scheduleLoopUpdate() {
+        _pendingLoopUpdate = true;
+        clearTimeout(_loopDebounce);
+        _loopDebounce = setTimeout(toggleLoopMode, 600);
+    }
+
+    // ── Status polling ────────────────────────────────────────────────────────
+
     async function updateStatus() {
         try {
             const r = await fetch('/api/scenario/status');
@@ -204,19 +224,30 @@ def generate_launch_description():
 
             const ind = document.getElementById('globalStatusIndicator');
             const txt = document.getElementById('globalStatusText');
-            if (ind) ind.className = `status-indicator status-${s.status}`;
+            if (ind) {
+                const indicatorStatus = s.loop_restarting ? 'restarting' : s.status;
+                ind.className = `status-indicator status-${indicatorStatus}`;
+            }
+
             let label = s.status.toUpperCase();
-            if (s.scenario) label += ` — ${s.scenario}`;
-            if (s.runtime) label += ` (${Math.round(s.runtime)}s)`;
+            if (s.loop_restarting) label = 'RESTARTING (loop)';
+            if (s.scenario && !s.loop_restarting) label += ` — ${s.scenario}`;
+            if (s.runtime) label += ` (${Math.round(s.runtime)}s`;
+            if (s.runtime && s.loop_mode && !s.loop_restarting) {
+                label += ` / ${s.default_runtime}s`;
+            }
+            if (s.runtime) label += `)`;
             if (s.waiting_for_model_check) label += ' · awaiting model check';
+            if (s.loop_mode && !s.loop_restarting) label += ' · looping';
             if (txt) txt.textContent = label;
 
-            if (!_isEditingLoop) {
-                document.getElementById('loopMode').checked = s.loop_mode;
-                document.getElementById('loopDelay').value = s.loop_delay;
-                document.getElementById('loopRuntime').value = s.default_runtime;
-                document.getElementById('modelCheckEnabled').checked = s.model_check_enabled !== false;
-                document.getElementById('modelCheckConfig').value = s.model_check_config || 'config/default.yaml';
+            // Only sync server-side loop settings if the user isn't actively editing them
+            if (!_pendingLoopUpdate) {
+                syncCheckbox('loopMode', s.loop_mode);
+                syncInput('loopDelay', s.loop_delay);
+                syncInput('loopRuntime', s.default_runtime);
+                syncCheckbox('modelCheckEnabled', s.model_check_enabled !== false);
+                syncInput('modelCheckConfig', s.model_check_config || 'config/default.yaml');
             }
 
             const startBtn = document.getElementById('startBtn');
@@ -232,6 +263,18 @@ def generate_launch_description():
         } catch (e) { /* network */ }
     }
 
+    function syncCheckbox(id, value) {
+        const el = document.getElementById(id);
+        if (el && el !== document.activeElement) el.checked = value;
+    }
+
+    function syncInput(id, value) {
+        const el = document.getElementById(id);
+        if (el && el !== document.activeElement) el.value = value;
+    }
+
+    // ── Log ───────────────────────────────────────────────────────────────────
+
     let _lastLogContent = '';
 
     async function updateLog() {
@@ -243,21 +286,20 @@ def generate_launch_description():
             const text = d.output || '';
             if (text === _lastLogContent) return;
             _lastLogContent = text;
-            // Only update DOM content if autoscroll is on, or user is already
-            // at the bottom — avoids yanking the viewport during copy/select.
             const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
             const shouldScroll = document.getElementById('autoScrollScenario')?.checked;
             if (shouldScroll || atBottom) {
                 el.textContent = text;
                 if (shouldScroll) el.scrollTop = el.scrollHeight;
             } else {
-                // Append only new lines so existing selection is not destroyed
                 const newText = text.slice(_lastRenderedLength ?? 0);
                 if (newText) el.textContent += newText;
             }
             _lastRenderedLength = text.length;
         } catch (e) { /* network */ }
     }
+
+    // ── Positions ─────────────────────────────────────────────────────────────
 
     async function updateStoredPositions() {
         try {
@@ -266,28 +308,29 @@ def generate_launch_description():
             const el = document.getElementById('storedPositionsInfo');
             if (!el) return;
 
-            if (!positions.start && !positions.goal) {
+            const goals = positions.goals || [];
+            if (!positions.start && goals.length === 0) {
                 el.innerHTML = '<div class="no-stored-positions">No positions stored</div>';
                 return;
             }
 
             let html = '';
             if (positions.start) {
-                const { lat, lng, psi, utm } = positions.start;
+                const { lat, lng, psi } = positions.start;
                 html += `<div class="position-item">
                     <strong>🟢 Start</strong><br>
                     ${lat.toFixed(6)}, ${lng.toFixed(6)}&nbsp;|&nbsp;ψ=${(psi||0).toFixed(3)} rad<br>
                     <code>Position(lat_long=(${lat.toFixed(6)}, ${lng.toFixed(6)}), psi=${(psi||0).toFixed(3)})</code>
                 </div>`;
             }
-            if (positions.goal) {
-                const { lat, lng, utm } = positions.goal;
+            goals.forEach((g, i) => {
+                const stopLabel = g.stop ? ' <span style="color:#e67e00">[STOP]</span>' : '';
                 html += `<div class="position-item">
-                    <strong>🔴 Goal</strong><br>
-                    ${lat.toFixed(6)}, ${lng.toFixed(6)}<br>
-                    <code>Position(lat_long=(${lat.toFixed(6)}, ${lng.toFixed(6)}))</code>
+                    <strong>🔴 Goal ${i + 1}</strong>${stopLabel}<br>
+                    ${g.lat.toFixed(6)}, ${g.lng.toFixed(6)}<br>
+                    <code>(${g.lat.toFixed(6)}, ${g.lng.toFixed(6)}, ${g.stop ? 1 : 0})</code>
                 </div>`;
-            }
+            });
             el.innerHTML = html;
         } catch (e) { /* network */ }
     }
@@ -295,7 +338,8 @@ def generate_launch_description():
     async function applyPositions() {
         const r = await fetch('/api/positions/get');
         const positions = await r.json();
-        if (!positions.start && !positions.goal) {
+        const goals = positions.goals || [];
+        if (!positions.start && goals.length === 0) {
             alert('No stored positions. Use Goal Picker first.');
             return;
         }
@@ -305,10 +349,18 @@ def generate_launch_description():
             const idx = lines.findIndex(l => l.trim().startsWith('start_position = Position('));
             if (idx >= 0) lines[idx] = line; else lines.unshift(line);
         }
-        if (positions.goal) {
-            const line = `goal_position = Position(lat_long=(${positions.goal.lat.toFixed(6)}, ${positions.goal.lng.toFixed(6)}))`;
-            const idx = lines.findIndex(l => l.trim().startsWith('goal_position = Position('));
-            if (idx >= 0) lines[idx] = line; else lines.push(line);
+        if (goals.length > 0) {
+            const items = goals.map(g => `    (${g.lat.toFixed(6)}, ${g.lng.toFixed(6)}, ${g.stop ? 1 : 0})`);
+            const block = `goal_positions = [\n${items.join(',\n')}\n]`;
+            const start = lines.findIndex(l => l.trim().startsWith('goal_positions = ['));
+            if (start >= 0) {
+                const end = lines.findIndex((l, i) => i > start && l.trim() === ']');
+                lines.splice(start, end >= 0 ? end - start + 1 : 1, ...block.split('\n'));
+            } else {
+                const afterStart = lines.findIndex(l => l.trim().startsWith('start_position = '));
+                const insertAt = afterStart >= 0 ? afterStart + 1 : lines.length;
+                lines.splice(insertAt, 0, ...block.split('\n'));
+            }
         }
         setEditorValue(lines.join('\n'));
     }
@@ -322,9 +374,13 @@ def generate_launch_description():
 
     function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+    // ── Init ──────────────────────────────────────────────────────────────────
+
     function init() {
         initEditor();
+        loadTemplate();
         loadScenarios();
+        restoreLoopPrefs();
         updateStatus();
         updateLog();
         updateStoredPositions();
@@ -336,25 +392,16 @@ def generate_launch_description():
         document.getElementById('saveBtn')?.addEventListener('click', saveScenario);
         document.getElementById('copySelectedBtn')?.addEventListener('click', copySelected);
         document.getElementById('clearEditorBtn')?.addEventListener('click', () => {
-            if (confirm('Clear editor?')) setEditorValue(DEFAULT_LAUNCH);
+            if (confirm('Reset editor to template?')) loadTemplate();
         });
         document.getElementById('applyPositionsBtn')?.addEventListener('click', applyPositions);
         document.getElementById('clearPositionsBtn')?.addEventListener('click', clearPositions);
 
-        const loopInputs = ['loopMode', 'loopDelay', 'loopRuntime', 'modelCheckEnabled', 'modelCheckConfig'];
-        loopInputs.forEach(id => {
+        PERSIST_KEYS.forEach(id => {
             const el = document.getElementById(id);
             if (!el) return;
-            el.addEventListener('focus', () => { _isEditingLoop = true; });
-            el.addEventListener('blur', () => { _isEditingLoop = false; });
-            el.addEventListener('change', () => {
-                clearTimeout(_loopDebounce);
-                _loopDebounce = setTimeout(toggleLoopMode, 600);
-            });
-            el.addEventListener('input', () => {
-                clearTimeout(_loopDebounce);
-                _loopDebounce = setTimeout(toggleLoopMode, 1000);
-            });
+            el.addEventListener('change', scheduleLoopUpdate);
+            el.addEventListener('input', scheduleLoopUpdate);
         });
 
         setInterval(updateStatus, 1000);

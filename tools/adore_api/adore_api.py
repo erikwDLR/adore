@@ -12,6 +12,7 @@
 # ********************************************************************************
 
 import os
+import sys
 import subprocess
 import threading
 import time
@@ -135,11 +136,26 @@ app = Flask(__name__,
             static_folder=os.path.join(_HERE, 'static'))
 CORS(app)
 
+# Register hardware monitor blueprint
+# adore_api.py lives at tools/adore_api/adore_api.py
+# hardware_monitor lives at ros2_workspace/src/adore_interfaces/hardware_monitor/
+_HW_MONITOR_PATH = os.path.normpath(
+    os.path.join(_HERE, '..', '..', 'ros2_workspace', 'src', 'adore_interfaces', 'hardware_monitor')
+)
+if _HW_MONITOR_PATH not in sys.path:
+    sys.path.insert(0, _HW_MONITOR_PATH)
+try:
+    from hardware_monitor.hardware_monitor_api import get_hardware_monitor_blueprint as _get_hw_bp
+    app.register_blueprint(_get_hw_bp())
+    print(f"✓ Hardware monitor blueprint registered (path: {_HW_MONITOR_PATH})")
+except Exception as _hw_err:
+    print(f"✗ Hardware monitor blueprint not available: {_hw_err}")
+
 LOG_DIRECTORY = None
 
 stored_positions = {
     'start': None,
-    'goal': None
+    'goals': []
 }
 
 
@@ -492,6 +508,8 @@ class ScenarioManager:
         self.output_lock = threading.Lock()
         self.scenario_start_time = None
         self.loop_active = False
+        self.loop_restarting = False
+        self.current_scenario_is_file = True
         self.model_check_enabled = True
         self.model_check_config = "config/default.yaml"
         self.current_model_check_run_id = None
@@ -707,6 +725,7 @@ class ScenarioManager:
                 cmd = ["ros2", "launch", full_path]
                 cwd = None
                 self.current_scenario = scenario_input
+                self.current_scenario_is_file = True
 
                 print(
                     f"[ScenarioManager] Starting scenario via ros2 launch: "
@@ -726,6 +745,7 @@ class ScenarioManager:
 
                 self.current_scenario_content = scenario_input
                 self.current_scenario = os.path.relpath(full_path, self.base_directory)
+                self.current_scenario_is_file = False
 
                 cmd = ["ros2", "launch", full_path]
                 cwd = None
@@ -870,6 +890,9 @@ class ScenarioManager:
 
             self.status = "idle"
             self.current_process = None
+            self.loop_mode = False
+            self.loop_active = False
+            self.loop_restarting = False
             return {"success": True, "message": f"Halted {len(ros2_pids_to_kill)} ROS2 processes"}
 
         except Exception as e:
@@ -962,13 +985,14 @@ class ScenarioManager:
             "scenario_content": self.current_scenario_content,
             "loop_mode": self.loop_mode,
             "loop_delay": self.loop_delay,
+            "loop_restarting": self.loop_restarting,
             "default_runtime": self.default_runtime,
             "runtime": runtime,
             "pid": self.current_process.pid if self.current_process else None,
             "model_check_enabled": self.model_check_enabled,
             "model_check_config": self.model_check_config,
             "waiting_for_model_check": self.waiting_for_model_check,
-            "current_model_check_run_id": self.current_model_check_run_id  # Add this line
+            "current_model_check_run_id": self.current_model_check_run_id
         }
 
     def set_loop_mode(self, enabled, delay=0, runtime=60, model_check_enabled=True, model_check_config="config/default.yaml"):
@@ -999,91 +1023,102 @@ class ScenarioManager:
                 with self.output_lock:
                     self.output_buffer.append(formatted_line)
 
+    def _halt_process_only(self):
+        """Kill current process and ROS nodes without clearing loop state."""
+        try:
+            result = subprocess.run(["ps", "aux"], capture_output=True, text=True, check=False)
+            pids = []
+            for line in result.stdout.strip().split('\n')[1:]:
+                parts = line.split()
+                if len(parts) < 11:
+                    continue
+                cmd = ' '.join(parts[10:])
+                if not any(kw in cmd.lower() for kw in ['ros2 launch', 'ros2 run', 'ros2 bag', 'launch.py']):
+                    continue
+                if any(ex in cmd.lower() for ex in ['docker', 'containerd', 'adore-cli-main', '/bin/bash', '/bin/zsh']):
+                    continue
+                pids.append(parts[1])
+            for pid in pids:
+                subprocess.run(["kill", "-TERM", pid], check=False, timeout=5)
+            time.sleep(2)
+            for pid in pids:
+                subprocess.run(["kill", "-KILL", pid], check=False, timeout=5)
+        except Exception:
+            pass
+
+        if self.current_process:
+            try:
+                self.current_process.terminate()
+                self.current_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.current_process.kill()
+                self.current_process.wait()
+            except Exception:
+                pass
+
+        self.status = "idle"
+        self.current_process = None
+
+    def _loop_restart(self, reason):
+        """Halt, wait for model check, delay, then restart. Runs inside _loop_monitor."""
+        self.loop_restarting = True
+        try:
+            print(f"Loop: {reason}, halting...")
+            self._halt_process_only()
+
+            if self.waiting_for_model_check:
+                print("Loop: Waiting for model check to complete...")
+                max_wait = 300
+                wait_start = time.time()
+                while self.waiting_for_model_check and (time.time() - wait_start) < max_wait:
+                    if self.is_model_check_complete():
+                        break
+                    time.sleep(2)
+                with self.model_check_lock:
+                    self.waiting_for_model_check = False
+
+            time.sleep(2)
+
+            if not self.loop_mode or not self.loop_active:
+                return
+
+            if self.loop_delay > 0:
+                print(f"Loop: Waiting {self.loop_delay}s before restart...")
+                time.sleep(self.loop_delay)
+
+            if not self.loop_mode or not self.loop_active:
+                return
+
+            scenario = self.current_scenario
+            scenario_content = self.current_scenario_content
+            is_file = self.current_scenario_is_file
+
+            print(f"Loop: Restarting scenario: {scenario}")
+            self.start_model_check_then_scenario(
+                scenario if is_file else scenario_content,
+                is_file=is_file,
+                model_check_enabled=self.model_check_enabled,
+                model_check_config=self.model_check_config
+            )
+        finally:
+            self.loop_restarting = False
+
     def _loop_monitor(self):
         while self.loop_active:
-            if self.loop_mode and self.current_scenario:
-                # Check if scenario is running
+            if self.loop_mode and self.current_scenario and not self.loop_restarting:
                 if self.current_process and self.current_process.poll() is None:
-                    # Check if runtime has been exceeded
                     if self.scenario_start_time and (time.time() - self.scenario_start_time) >= self.default_runtime:
-                        print(
-                            f"Loop: Runtime ({self.default_runtime}s) reached, halting...")
-                        self.halt_all()
-
-                        # Wait for model checking to complete if it's running
-                        if self.waiting_for_model_check:
-                            print("Loop: Waiting for model checking to complete...")
-                            max_wait_time = 300  # 5 minutes max wait
-                            wait_start = time.time()
-
-                            while self.waiting_for_model_check and (time.time() - wait_start) < max_wait_time:
-                                if self.is_model_check_complete():
-                                    print("Loop: Model checking completed")
-                                    break
-                                time.sleep(2)
-
-                            if self.waiting_for_model_check:
-                                print(
-                                    "Loop: Model checking timeout, proceeding anyway")
-                                with self.model_check_lock:
-                                    self.waiting_for_model_check = False
-
-                        time.sleep(2)
-
-                        if self.loop_mode and self.current_scenario:
-                            print(
-                                f"Loop: Waiting {self.loop_delay}s before restart...")
-                            time.sleep(self.loop_delay)
-                            print(
-                                f"Loop: Starting scenario: {self.current_scenario}")
-                            self.start_model_check_then_scenario(
-                                self.current_scenario,
-                                is_file=True,
-                                model_check_enabled=self.model_check_enabled,
-                                model_check_config=self.model_check_config
-                            )
-
+                        self._loop_restart(f"runtime ({self.default_runtime}s) reached")
                 elif self.current_process and self.current_process.poll() is not None:
-                    print(
-                        f"Loop: Process ended, waiting for model check and restarting after {self.loop_delay}s...")
-
-                    # Wait for model checking to complete
-                    if self.waiting_for_model_check:
-                        print(
-                            "Loop: Waiting for model checking to complete after scenario end...")
-                        max_wait_time = 300
-                        wait_start = time.time()
-
-                        while self.waiting_for_model_check and (time.time() - wait_start) < max_wait_time:
-                            if self.is_model_check_complete():
-                                print(
-                                    "Loop: Model checking completed after scenario end")
-                                break
-                            time.sleep(2)
-
-                        if self.waiting_for_model_check:
-                            print("Loop: Model checking timeout after scenario end")
-                            with self.model_check_lock:
-                                self.waiting_for_model_check = False
-
-                    self.halt_all()
-                    time.sleep(2)
-
-                    if self.loop_mode and self.current_scenario:
-                        time.sleep(self.loop_delay)
-                        self.start_model_check_then_scenario(
-                            self.current_scenario,
-                            is_file=True,
-                            model_check_enabled=self.model_check_enabled,
-                            model_check_config=self.model_check_config
-                        )
-
+                    self._loop_restart("process ended")
                 elif not self.current_process:
-                    print(
-                        f"Loop: No process running, starting scenario: {self.current_scenario}")
+                    scenario = self.current_scenario
+                    scenario_content = self.current_scenario_content
+                    is_file = self.current_scenario_is_file
+                    print(f"Loop: No process running, starting scenario: {scenario}")
                     self.start_model_check_then_scenario(
-                        self.current_scenario,
-                        is_file=True,
+                        scenario if is_file else scenario_content,
+                        is_file=is_file,
                         model_check_enabled=self.model_check_enabled,
                         model_check_config=self.model_check_config
                     )
@@ -1360,6 +1395,15 @@ def goal_picker():
     return render_template('goal_picker.html')
 
 
+@app.route('/api/scenario/template')
+def get_scenario_template():
+    result = scenario_manager.get_scenario_content('simulation_scenarios/template.launch.py')
+    if not result['success']:
+        result['path_checked'] = os.path.join(scenario_manager.base_directory, 'simulation_scenarios', 'template.launch.py')
+        return jsonify(result), 404
+    return jsonify(result)
+
+
 @app.route('/api/status')
 def api_status():
     ws_status = workspace_monitor.get_status() if workspace_monitor else None
@@ -1555,8 +1599,8 @@ def set_positions():
 
     if 'start' in data:
         stored_positions['start'] = data['start']
-    if 'goal' in data:
-        stored_positions['goal'] = data['goal']
+    if 'goals' in data:
+        stored_positions['goals'] = data['goals']
 
     return jsonify({"success": True, "message": "Positions stored successfully"})
 
@@ -1569,7 +1613,7 @@ def get_positions():
 @app.route('/api/positions/clear', methods=['POST'])
 def clear_positions():
     global stored_positions
-    stored_positions = {'start': None, 'goal': None}
+    stored_positions = {'start': None, 'goals': []}
     return jsonify({"success": True, "message": "Positions cleared"})
 
 
@@ -2190,6 +2234,7 @@ def _mc_load_package_default_yaml():
 # ── ROS Workspace Build Management ──────────────────────────────────────────
 
 _workspace_build_procs: dict = {}
+_workspace_build_results: dict = {}  # target -> exit code, populated after process exits
 _workspace_build_broadcaster = _LogBroadcaster(maxlen=5000)
 
 
@@ -2226,6 +2271,7 @@ def ros_workspace_status():
         'build_dir_exists': os.path.isdir(build_dir),
         'install_dir_exists': os.path.isdir(install_dir),
         'running': running,
+        'exit_codes': dict(_workspace_build_results),
         'total_packages': total_pkgs,
         'built_packages': built_pkgs,
     })
@@ -2360,6 +2406,7 @@ def _run_workspace_make(target: str):
                         _colcon_unknown_packages.add(pkg_name)
                         unknown_warned = True
             rc = proc.wait()
+            _workspace_build_results[target] = rc
             _workspace_build_broadcaster.write(
                 f'=== {label} exited (rc={rc}) ===',
                 'stdout' if rc == 0 else 'stderr'

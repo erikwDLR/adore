@@ -332,9 +332,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
     flex-shrink: 0;
     background: #6e7681;
 }
-.status-running  { background: #3fb950; box-shadow: 0 0 6px #3fb95060; animation: pulse 1.5s infinite; }
-.status-failed   { background: #f85149; }
-.status-idle     { background: #e3b341; }
+.status-running    { background: #3fb950; box-shadow: 0 0 6px #3fb95060; animation: pulse 1.5s infinite; }
+.status-restarting { background: #d29922; box-shadow: 0 0 6px #d2992260; animation: pulse 0.8s infinite; }
+.status-failed     { background: #f85149; }
+.status-idle       { background: #e3b341; }
 .status-recording{ background: #f85149; animation: pulse 1s infinite; }
 .status-stopped  { background: #6e7681; }
 .status-completed{ background: #3fb950; }
@@ -890,6 +891,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .ws-val { color: #c9d1d9; font-family: 'JetBrains Mono','Consolas',monospace; font-size: 11px; }
 .ws-val.ok  { color: #3fb950; }
 .ws-val.err { color: #f85149; }
+
+.pkg-indicator.pkg-build-failed {
+    background: #f85149;
+}
 
 /* ── mc-panel-summary alias ─────────────────────────────────────────────────── */
 .mc-panel-summary .modelcheck-summary { margin: 0; }

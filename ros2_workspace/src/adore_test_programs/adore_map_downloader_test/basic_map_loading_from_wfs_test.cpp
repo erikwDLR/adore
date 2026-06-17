@@ -41,7 +41,7 @@ int main( int argc, char* argv[] )
   std::filesystem::remove_all( "cache" ); 
 
   // Initialize the configuration from a properties file
-  Config cfg( "../../../../adore_test_programs/adore_map_downloader_test/config/r2s_wfs_config_bs.json" );
+  Config cfg( "../../../src/adore_test_programs/adore_map_downloader_test/config/r2s_wfs_config_bs.json" );
   // Use current directory for file cache and enable debug mode
   MapDownloader map_downloader( cfg.server_url, cfg.username, cfg.password, cfg.project_name, cfg.target_srs, 
     cfg.bbox, "", true, true, true ); // curl_global_init, curl_global_cleanup, debug: 
@@ -207,6 +207,9 @@ int main( int argc, char* argv[] )
     std::cout << module_name( argv[0] ) << ": The two JSON files for lane borders (from the simple method and from loading and saving) differ." << std::endl;
     return -1; // Return error code if files differ
   }
+
+  std::cout << std::endl << std::endl << module_name( argv[0] ) 
+    << ": All tests passed successfully, good!" << std::endl << std::endl << std::endl;
 
   // Clean up: remove the created JSON files for lane borders
   std::remove( cfg.lane_border_filename.c_str() );

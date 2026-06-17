@@ -4,6 +4,7 @@
 
     let _mcFrameLoaded = false;
     let _vizFrameLoaded = false;
+    let _hwMonitorInited = false;
 
     function showTab(name) {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -30,6 +31,13 @@
             }
         }
 
+        if (name === 'hardware-monitor' && !_hwMonitorInited) {
+            _hwMonitorInited = true;
+            if (window.HardwareMonitorPanel) {
+                window.HardwareMonitorPanel.init();
+            }
+        }
+
         window.dispatchEvent(new CustomEvent('tabchange', { detail: { tab: name } }));
     }
 
@@ -48,6 +56,18 @@
                 if (target) target.classList.add('active');
             });
         });
+
+        // ── URL Parameter Check ────────────────────────────────────────────────
+        const urlParams = new URLSearchParams(window.location.search);
+        const activeTab = urlParams.get('tab'); // Looks for ?tab=value
+        
+        if (activeTab) {
+            // Verify the tab actually exists before trying to switch to it
+            const tabExists = document.querySelector(`.tab[data-tab="${activeTab}"]`);
+            if (tabExists) {
+                showTab(activeTab);
+            }
+        }
     }
 
     window.showTab = showTab;
