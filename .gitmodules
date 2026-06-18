@@ -15,7 +15,7 @@
 	url = git@github.com:erikwDLR/adore_decision_maker.git
 [submodule "nodes/adore_trajectory_tracker"]
 	path = ros2_workspace/src/adore_ros2_nodes/trajectory_tracker
-	url = git@github.com:eclipse-adore/adore_trajectory_tracker.git
+	url = git@github.com:erikwDLR/adore_trajectory_tracker.git
 [submodule "adore_scenarios/adore_simulation_scenarios"]
 	path = adore_scenarios/simulation_scenarios
 	url = git@github.com:erikwDLR/adore_simulation_scenarios.git
@@ -39,7 +39,7 @@
 	url = git@github.com:eclipse-adore/adore_controllers.git
 [submodule "libraries/adore_map"]
 	path = ros2_workspace/src/adore_libraries/adore_map
-	url = git@github.com:eclipse-adore/adore_map.git
+	url = git@github.com:erikwDLR/adore_map.git
 [submodule "libraries/adore_math"]
 	path = ros2_workspace/src/adore_libraries/adore_math
 	url = git@github.com:eclipse-adore/adore_math.git
@@ -95,7 +95,7 @@
 	url = git@github.com:pageldev/libOpenDRIVE.git
 [submodule "ros2_workspace/src/vendor/osqp-eigen"]
 	path = ros2_workspace/src/vendor/osqp_eigen
-	url = https://github.com/robotology/osqp-eigen.git
+	url = https://github.com/dlr-ts/osqp-eigen.git
 [submodule "ros2_workspace/src/vendor/multi_agent_solver"]
 	path = ros2_workspace/src/vendor/multi_agent_solver
 	url = git@github.com:DLR-TS/multi_agent_solver.git
