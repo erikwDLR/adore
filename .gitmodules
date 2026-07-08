@@ -3,7 +3,7 @@
 	url = git@github.com:eclipse-adore/adore_ros2_msgs.git
 [submodule "nodes/adore_simulated_vehicle"]
 	path = ros2_workspace/src/adore_ros2_nodes/simulated_vehicle
-	url = git@github.com:eclipse-adore/adore_simulated_vehicle.git
+	url = git@github.com:erikwDLR/adore_simulated_vehicle.git
 [submodule "mission_control"]
 	path = ros2_workspace/src/adore_ros2_nodes/mission_control
 	url = git@github.com:eclipse-adore/adore_mission_control.git
