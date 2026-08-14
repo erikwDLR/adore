@@ -13,7 +13,7 @@
     "rotational_inertia_div_mass": 1.57,
     "front_track_width": 0.0,
     "rear_track_width": 0.0,
-    "body_width": 1.0,
+    "body_width": 0.5,
     "body_height": 0.5,
     "steering_ratio": 1.0,
     "steering_angle_max": 0.7,
