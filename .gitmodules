@@ -45,7 +45,7 @@
 	url = git@github.com:eclipse-adore/adore_math.git
 [submodule "libraries/adore_dynamics"]
 	path = ros2_workspace/src/adore_libraries/adore_dynamics
-	url = git@github.com:eclipse-adore/adore_dynamics.git
+	url = git@github.com:erikwDLR/adore_dynamics.git
 [submodule "conversions/adore_dynamics_conversions"]
 	path = ros2_workspace/src/adore_ros2_conversions/adore_dynamics_conversions
 	url = git@github.com:eclipse-adore/adore_dynamics_conversions.git
